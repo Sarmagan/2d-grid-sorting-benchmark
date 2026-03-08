@@ -8,11 +8,10 @@ This project benchmarks several algorithms that arrange a set of high-dimensiona
 
 | LAS | GradSort | RasterFairy |
 |:---:|:--------:|:-----------:|
-| ![LAS](results/las.png) | ![GradSort](results/gradsort.png) | ![RasterFairy](results/rasterfairy.png) |
+| <img src="results/las.png" width="200"> | <img src="results/gradsort.png" width="200"> | <img src="results/rasterfairy.png" width="200"> |
 | **SOM** | **KS** | **Random** |
-| ![SOM](results/som.png) | ![KS](results/ks.png) | ![Random](results/random.png) |
-
-### Benchmark Table (32 × 32 RGB, 1 024 elements)
+| <img src="results/som.png" width="200"> | <img src="results/ks.png" width="200"> | <img src="results/random.png" width="200"> |
+### Benchmark Table (32 × 32 RGB, 1024 elements)
 
 | Algorithm   | Time (s) | DPQ (p=16) |
 |-------------|:--------:|:----------:|
@@ -137,7 +136,6 @@ DPQ measures how well the 2-D spatial neighbourhood structure reflects the high-
 For each element, the function computes the average high-dimensional distance to its *k* nearest grid neighbours for every k from 1 to N-1, then compares this curve to the ideal curve obtained by sorting by HD distance directly. The final score is the ratio of the ℓ_p norms of these two curves.
 
 - **DPQ = 1.0** — perfect preservation of high-dimensional distances.  
-- **DPQ = 0.0** — no improvement over random placement.
 
 Implemented in `rgb_las.py` → `distance_preservation_quality()`.
 
