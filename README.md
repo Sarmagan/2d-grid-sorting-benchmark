@@ -6,11 +6,18 @@ This project benchmarks several algorithms that arrange a set of high-dimensiona
 
 ### Visual Comparison
 
-| LAS | GradSort | RasterFairy |
-|:---:|:--------:|:-----------:|
-| <img src="results/las.png" width="200"> | <img src="results/gradsort.png" width="200"> | <img src="results/rasterfairy.png" width="200"> |
-| **SOM** | **KS** | **Random** |
-| <img src="results/som.png" width="200"> | <img src="results/ks.png" width="200"> | <img src="results/random.png" width="200"> |
+<table>
+  <tr>
+    <td align="center"><b>LAS</b><br><img src="results/las.png"></td>
+    <td align="center"><b>GradSort</b><br><img src="results/gradsort.png"></td>
+    <td align="center"><b>RasterFairy</b><br><img src="results/rasterfairy.png"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>SOM</b><br><img src="results/som.png"></td>
+    <td align="center"><b>KS</b><br><img src="results/ks.png"></td>
+    <td align="center"><b>Random</b><br><img src="results/random.png"></td>
+  </tr>
+</table>
 ### Benchmark Table (32 × 32 RGB, 1024 elements)
 
 | Algorithm   | Time (s) | DPQ (p=16) |
