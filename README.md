@@ -18,6 +18,7 @@ This project benchmarks several algorithms that arrange a set of high-dimensiona
     <td align="center"><b>Random</b><br><img src="results/random.png"></td>
   </tr>
 </table>
+
 ### Benchmark Table (32 × 32 RGB, 1024 elements)
 
 | Algorithm   | Time (s) | DPQ (p=16) |
