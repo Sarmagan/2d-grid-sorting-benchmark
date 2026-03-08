@@ -8,14 +8,32 @@ This project benchmarks several algorithms that arrange a set of high-dimensiona
 
 <table>
   <tr>
-    <td align="center"><b>LAS</b><br><img src="results/las.png"></td>
-    <td align="center"><b>GradSort</b><br><img src="results/gradsort.png"></td>
-    <td align="center"><b>RasterFairy</b><br><img src="results/rasterfairy.png"></td>
+    <td align="center">
+      <b>LAS</b><br>
+      <img src="results/las.png" width="128" height="128" style="image-rendering: pixelated;">
+    </td>
+    <td align="center">
+      <b>GradSort</b><br>
+      <img src="results/gradsort.png" width="128" height="128" style="image-rendering: pixelated;">
+    </td>
+    <td align="center">
+      <b>RasterFairy</b><br>
+      <img src="results/rasterfairy.png" width="128" height="128" style="image-rendering: pixelated;">
+    </td>
   </tr>
   <tr>
-    <td align="center"><b>SOM</b><br><img src="results/som.png"></td>
-    <td align="center"><b>KS</b><br><img src="results/ks.png"></td>
-    <td align="center"><b>Random</b><br><img src="results/random.png"></td>
+    <td align="center">
+      <b>SOM</b><br>
+      <img src="results/som.png" width="128" height="128" style="image-rendering: pixelated;">
+    </td>
+    <td align="center">
+      <b>KS</b><br>
+      <img src="results/ks.png" width="128" height="128" style="image-rendering: pixelated;">
+    </td>
+    <td align="center">
+      <b>Random</b><br>
+      <img src="results/random.png" width="128" height="128" style="image-rendering: pixelated;">
+    </td>
   </tr>
 </table>
 
