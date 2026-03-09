@@ -41,6 +41,9 @@ from gridsort import (
     device,
 )
 
+from isomatch import isomatch_algorithm
+
+
 GRID_SIZE  = 32
 RESULTS_DIR = "results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -184,6 +187,18 @@ def run_ks(data, grid_size):
     return result, dpq
 
 
+def run_isomatch(data, grid_size):
+    from scipy.spatial.distance import pdist, squareform
+    # IsoMatch expects float features in [0,1]
+    data_norm = data.astype(np.float64) / 255.0
+    d_matrix  = squareform(pdist(data_norm))
+    perm, _, _ = isomatch_algorithm(d_matrix, grid_size=(grid_size, grid_size), num_swaps=10000)
+    result = data[perm].reshape(grid_size, grid_size, -1)
+    dpq = distance_preservation_quality(result, p=16)
+    return result, dpq
+
+
+
 ALGORITHMS = [
     ("Random",     run_random),
     ("LAS",        run_las),
@@ -191,8 +206,8 @@ ALGORITHMS = [
     ("RasterFairy",run_raster_fairy),
     ("SOM",        run_som),
     ("KS",         run_ks),
+    ("IsoMatch",   run_isomatch),
 ]
-
 
 def main():
     # Generate the shared input — same seed for all algorithms
@@ -217,6 +232,61 @@ def main():
         print(f"{name:<{col_w}}{elapsed:>{col_w}.2f}{dpq:>{col_w}.4f}")
     print("─" * (col_w * 3 + 2))
     print(f"\nSorted grids saved to ./{RESULTS_DIR}/")
+
+    # ── Build composite image ─────────────────────────────────────────────────
+    # Layout: Random centred on top, then 2 rows × 3 cols for the 6 algos
+    grids = {}
+    for name, fn in ALGORITHMS:
+        fname = os.path.join(RESULTS_DIR, f"{name.lower().replace(' ', '_')}.png")
+        grids[name] = np.array(Image.open(fname))
+
+    cell_px    = GRID_SIZE
+    label_h    = 14
+    pad        = 6
+    cell_w     = cell_px + pad
+    cell_h     = cell_px + label_h + pad
+
+    cols, rows = 3, 2
+    algo_names = ["LAS", "GradSort", "RasterFairy", "SOM", "KS", "IsoMatch"]
+
+    total_w = cols * cell_w + pad
+    total_h = (cell_h + pad) + rows * cell_h + pad
+
+    canvas = np.full((total_h, total_w, 3), 30, dtype=np.uint8)
+
+    from PIL import ImageDraw, ImageFont
+
+    def paste_cell(canvas, img_arr, x, y, label):
+        canvas_img = Image.fromarray(canvas)
+        canvas_img.paste(Image.fromarray(img_arr), (x, y))
+        draw = ImageDraw.Draw(canvas_img)
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 8)
+        except Exception:
+            font = ImageFont.load_default()
+        bbox = draw.textbbox((0, 0), label, font=font)
+        text_w = bbox[2] - bbox[0]
+        draw.text((x + (cell_px - text_w) // 2, y + cell_px + 2), label, fill=(220, 220, 220), font=font)
+        return np.array(canvas_img)
+
+    # Top row: Random centred
+    random_x = (total_w - cell_px) // 2
+    random_y = pad
+    canvas = paste_cell(canvas, grids["Random"], random_x, random_y, "Random (baseline)")
+
+    # 2×3 grid for the 6 algorithms
+    for i, name in enumerate(algo_names):
+        row = i // cols
+        col = i  % cols
+        x = pad + col * cell_w
+        y = pad + cell_h + pad + row * cell_h
+        # find dpq for label
+        dpq_val = next(d for n, _, d in results if n == name)
+        canvas = paste_cell(canvas, grids[name], x, y, f"{name}  DPQ {dpq_val:.3f}")
+
+    out_path = os.path.join(RESULTS_DIR, "comparison.png")
+    Image.fromarray(canvas).save(out_path)
+    print(f"Composite image saved to {out_path}")
 
 
 if __name__ == "__main__":

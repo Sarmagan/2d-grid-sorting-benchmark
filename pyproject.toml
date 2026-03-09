@@ -14,7 +14,8 @@ dependencies = [
     "torch>=2.1",
     "torchvision>=0.16",
     "minisom>=2.3",
-    "rasterfairy @ git+https://github.com/Quasimondo/RasterFairy.git@v1.1.0",
+    "rasterfairy @ git+https://github.com/Quasimondo/RasterFairy.git@035ac797f27413ef4356e070aedd52797a0c43ce",
+    "isomatch @ git+https://github.com/Sarmagan/IsoMatch-Python.git",
 ]
 
 [tool.uv]

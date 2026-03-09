@@ -6,36 +6,7 @@ This project benchmarks several algorithms that arrange a set of high-dimensiona
 
 ### Visual Comparison
 
-<table>
-  <tr>
-    <td align="center">
-      <b>LAS</b><br>
-      <img src="results/las.png" style="image-rendering: pixelated;">
-    </td>
-    <td align="center">
-      <b>GradSort</b><br>
-      <img src="results/gradsort.png" style="image-rendering: pixelated;">
-    </td>
-    <td align="center">
-      <b>RasterFairy</b><br>
-      <img src="results/rasterfairy.png" style="image-rendering: pixelated;">
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <b>SOM</b><br>
-      <img src="results/som.png" style="image-rendering: pixelated;">
-    </td>
-    <td align="center">
-      <b>KS</b><br>
-      <img src="results/ks.png" style="image-rendering: pixelated;">
-    </td>
-    <td align="center">
-      <b>Random</b><br>
-      <img src="results/random.png" style="image-rendering: pixelated;">
-    </td>
-  </tr>
-</table>
+![Comparison](arranged.png)
 
 ### Benchmark Table (32 × 32 RGB, 1024 elements)
 
@@ -46,6 +17,7 @@ This project benchmarks several algorithms that arrange a set of high-dimensiona
 | RasterFairy |    64.73 |     0.9086 |
 | KS          |    17.25 |     0.8978 |
 | SOM         |     4.48 |     0.8906 |
+| IsoMatch    |  1025.75 |     0.7684 |
 | Random      |     0.08 |     0.3294 |
 
 Run the benchmark yourself with:
@@ -145,6 +117,17 @@ where K_X is the feature kernel, K_G is the grid kernel, and the maximisation is
 **Reference:** Novi Quadrianto, Le Song, Alex Smola (2009)  
 *Kernelized Sorting* — NeurIPS 2009  
 https://users.sussex.ac.uk/~nq28/pubs/QuaSonSmo09.pdf
+
+---
+
+### IsoMatch
+**Implementation:** `gradsort.py` → `isomatch_rgb()`
+
+IsoMatch uses **Isomap** (a manifold learning technique) to embed the high-dimensional elements into a low-dimensional space that respects geodesic distances, then solves a **bipartite matching** problem to assign elements to grid positions. An optional random-swap refinement phase further improves the result.
+
+**Reference:** Fried, Shechtman, Goldman, Finkelstein (2015)  
+*IsoMatch: Creating Informative Grid Layouts*  
+https://github.com/ohadf/isomatch
 
 ---
 

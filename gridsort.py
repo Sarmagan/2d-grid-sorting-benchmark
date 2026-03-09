@@ -40,6 +40,7 @@ import rasterfairy
 from rasterfairy import rfoptimizer
 
 from KernelizedSorting_master.kernelized_sorting_color import KS
+from isomatch import isomatch_algorithm
 
 # ── device ────────────────────────────────────────────────────────────────────
 device = torch.device("cpu")
@@ -479,6 +480,30 @@ def KS_rgb():
     dpq = distance_preservation_quality(x_reordered, p=16)
     print(f"Distance Preservation Quality: {dpq}")
 
+def isomatch_rgb():
+    """
+    Sort a random 32×32 RGB grid using IsoMatch.
+
+    IsoMatch uses an Isomap embedding to find a structure-preserving mapping
+    from elements to grid positions via bipartite matching. Result saved as
+    'isomatch_rgb.png'.
+    """
+    from scipy.spatial.distance import pdist, squareform
+
+    grid_size = 32
+    x_orig = generate_random_colors_numpy(grid_size, grid_size)
+    data   = x_orig.reshape(-1, 3)
+
+    data_norm = data.astype(np.float64) / 255.0
+    d_matrix  = squareform(pdist(data_norm))
+
+    perm, _, _ = isomatch_algorithm(d_matrix, grid_size=(grid_size, grid_size), num_swaps=50000)
+
+    x_reordered = data[perm].reshape(grid_size, grid_size, -1)
+    Image.fromarray(x_reordered.astype(np.uint8)).save('isomatch_rgb.png')
+
+    dpq = distance_preservation_quality(x_reordered, p=16)
+    print(f"Distance Preservation Quality: {dpq}")
 
 # ── entry point ────────────────────────────────────────────────────────────────
 
@@ -489,7 +514,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "--method",
         default="LAS",
-        choices=["LAS", "Gradsort", "RF", "SOM", "Random", "KS"],
+        choices=["LAS", "Gradsort", "RF", "SOM", "Random", "KS", "IsoMatch"],
         help="Algorithm to run."
     )
     args = parser.parse_args()
@@ -501,5 +526,6 @@ if __name__ == '__main__':
         "SOM":      self_organizing_maps_rgb,
         "Random":   random_rgb,
         "KS":       KS_rgb,
+        "IsoMatch": isomatch_rgb,
     }
     dispatch[args.method]()
