@@ -13,10 +13,11 @@ Algorithms compared
 - SOM        : Self-Organising Maps
 - Random     : Random baseline
 - KS         : Kernelized Sorting
+- TSNEH     : t-SNE + Hungarian + swap refinement
 
 Usage
 -----
-    python gridsort.py --method [LAS|Gradsort|RF|SOM|Random|KS]
+    python gridsort.py --method [LAS|Gradsort|RF|SOM|Random|KS|IsoMatch|TSNEH]
 """
 
 from PIL import Image
@@ -243,6 +244,464 @@ def pretty_print(**args):
         elif isinstance(val, str):
             print('%s' % val, end=' ')
     print()
+
+
+def build_grid_coordinates(grid_size):
+    """Return (N, 2) integer coordinates for a square grid."""
+    yy, xx = np.meshgrid(np.arange(grid_size), np.arange(grid_size), indexing='ij')
+    return np.column_stack((yy.ravel(), xx.ravel())).astype(np.float64)
+
+
+def build_grid_neighbor_lists(grid_size, radius=1):
+    """
+    Return weighted local neighbourhood lists for each grid cell.
+
+    All cells within the given Euclidean radius are included and weighted by
+    inverse distance, so closer grid relationships contribute more strongly.
+    """
+    coordinates = build_grid_coordinates(grid_size)
+    neighbors = []
+    for src_idx, src in enumerate(coordinates):
+        cell_neighbors = []
+        for dst_idx, dst in enumerate(coordinates):
+            if src_idx == dst_idx:
+                continue
+            dist = np.linalg.norm(src - dst)
+            if dist == 0 or dist > radius:
+                continue
+            cell_neighbors.append((dst_idx, 1.0 / dist))
+        neighbors.append(cell_neighbors)
+    return neighbors
+
+
+def normalised_pairwise_distances(points):
+    """Compute pairwise Euclidean distances and scale them to [0, 1]."""
+    distances = cdist(points, points, metric='euclidean').astype(np.float64)
+    max_dist = distances.max()
+    if max_dist > 0:
+        distances /= max_dist
+    return distances
+
+
+def normalise_points(points):
+    """Min-max normalise each coordinate dimension to [0, 1]."""
+    points = points.astype(np.float64)
+    mins = points.min(axis=0, keepdims=True)
+    maxs = points.max(axis=0, keepdims=True)
+    return (points - mins) / (maxs - mins + 1e-12)
+
+
+def resolve_tsne_perplexity(n_items, perplexity=None):
+    """
+    Pick a valid t-SNE perplexity for the current problem size.
+
+    The default heuristic keeps the 32x32 behaviour close to the tuned value of
+    24 while shrinking automatically for smaller grids where a large perplexity
+    would be invalid or overly global.
+    """
+    if perplexity is None:
+        target = min(24.0, max(5.0, np.sqrt(n_items)))
+    else:
+        target = float(perplexity)
+
+    max_valid = max(1.0, n_items - 1.0 - 1e-3)
+    return min(target, max_valid)
+
+
+def build_tsne_assignment_cost(data, grid_size, perplexity=None, tsne_iter=2000):
+    """
+    Build the assignment cost for t-SNE + Hungarian grid placement.
+
+    We first embed the RGB vectors into 2D with t-SNE over their pairwise
+    distances, then measure the cost of assigning each embedded point to each
+    grid cell. Hungarian assignment then converts this continuous embedding into
+    a one-to-one placement on the discrete grid.
+    """
+    data_norm = data.astype(np.float64)
+    if data_norm.max() > 1.0:
+        data_norm /= 255.0
+
+    resolved_perplexity = resolve_tsne_perplexity(data.shape[0], perplexity)
+    distance_matrix = cdist(data_norm, data_norm, metric='euclidean')
+    source_points = TSNE(
+        n_components=2,
+        perplexity=resolved_perplexity,
+        metric='precomputed',
+        init='random',
+        learning_rate='auto',
+        max_iter=tsne_iter,
+        random_state=0,
+        verbose=False,
+    ).fit_transform(distance_matrix)
+    source_points = normalise_points(source_points)
+
+    target_points = build_grid_coordinates(grid_size)
+    target_points = normalise_points(target_points)
+
+    feature_cost = cdist(source_points, target_points, metric='euclidean')
+    max_cost = feature_cost.max()
+    if max_cost > 0:
+        feature_cost /= max_cost
+    return feature_cost
+
+
+def _swap_delta_neighbor_energy(perm, pos_a, pos_b, feature_distances, neighbors):
+    """
+    Return the change in local neighbour energy if two grid positions are swapped.
+
+    The energy is the sum of feature distances along grid edges. Negative deltas
+    improve the layout by making adjacent cells more similar in feature space.
+    """
+    if pos_a == pos_b:
+        return 0.0
+
+    item_a = perm[pos_a]
+    item_b = perm[pos_b]
+
+    affected_edges = set()
+    edge_weights = {}
+    for src in (pos_a, pos_b):
+        for dst, weight in neighbors[src]:
+            edge = (src, int(dst)) if src < dst else (int(dst), src)
+            affected_edges.add(edge)
+            edge_weights[edge] = weight
+
+    old_energy = 0.0
+    new_energy = 0.0
+    for u, v in affected_edges:
+        weight = edge_weights[(u, v)]
+        old_u = item_a if u == pos_a else item_b if u == pos_b else perm[u]
+        old_v = item_a if v == pos_a else item_b if v == pos_b else perm[v]
+        new_u = item_b if u == pos_a else item_a if u == pos_b else perm[u]
+        new_v = item_b if v == pos_a else item_a if v == pos_b else perm[v]
+        old_energy += weight * feature_distances[old_u, old_v]
+        new_energy += weight * feature_distances[new_u, new_v]
+
+    return new_energy - old_energy
+
+
+def _compute_cell_neighbor_energies(perm, feature_distances, neighbors):
+    """Return the per-cell weighted neighbour energy for the current layout."""
+    energies = np.zeros(perm.shape[0], dtype=np.float64)
+    for pos in range(perm.shape[0]):
+        item = perm[pos]
+        energies[pos] = sum(
+            weight * feature_distances[item, perm[neighbor_pos]]
+            for neighbor_pos, weight in neighbors[pos]
+        )
+    return energies
+
+
+def _compute_focus_edge_energy(perm, focus_positions, feature_distances, neighbors):
+    """Return the weighted neighbour energy over all edges touching focus cells."""
+    seen_edges = set()
+    energy = 0.0
+    for src in focus_positions:
+        for dst, weight in neighbors[src]:
+            dst = int(dst)
+            edge = (src, dst) if src < dst else (dst, src)
+            if edge in seen_edges:
+                continue
+            seen_edges.add(edge)
+            energy += weight * feature_distances[perm[edge[0]], perm[edge[1]]]
+    return energy
+
+
+def iter_window_positions(grid_size, window_size, stride):
+    """Yield flattened grid indices for sliding square windows."""
+    max_start = grid_size - window_size
+    if max_start < 0:
+        return
+
+    starts = list(range(0, max_start + 1, stride))
+    if starts[-1] != max_start:
+        starts.append(max_start)
+
+    for row_start in starts:
+        for col_start in starts:
+            positions = []
+            for row in range(row_start, row_start + window_size):
+                base = row * grid_size
+                for col in range(col_start, col_start + window_size):
+                    positions.append(base + col)
+            yield np.array(positions, dtype=np.int32)
+
+
+def refine_permutation_with_window_reassignments(
+    perm,
+    data,
+    grid_size,
+    p_dist=2,
+    window_sizes=(4, 3),
+    radius=2,
+):
+    """
+    Improve local regions with small Hungarian reassignments.
+
+    Each window proposes a multi-item reassignment using only its fixed external
+    neighbourhood as context, then accepts it only if the exact local energy
+    over all touched edges decreases.
+    """
+    data_norm = data.astype(np.float64)
+    if data_norm.max() > 1.0:
+        data_norm /= 255.0
+
+    feature_distances = cdist(data_norm, data_norm, metric='euclidean') ** p_dist
+    neighbors = build_grid_neighbor_lists(grid_size, radius=radius)
+    refined_perm = perm.copy()
+    accepted = 0
+
+    for window_size in window_sizes:
+        if window_size > grid_size:
+            continue
+        stride = max(1, window_size // 2)
+        for window_positions in iter_window_positions(grid_size, window_size, stride):
+            window_set = {int(pos) for pos in window_positions}
+            window_items = refined_perm[window_positions]
+            cost_matrix = np.zeros((window_positions.shape[0], window_positions.shape[0]), dtype=np.float64)
+
+            for target_col, target_pos in enumerate(window_positions):
+                external_neighbors = [
+                    (int(neighbor_pos), weight)
+                    for neighbor_pos, weight in neighbors[int(target_pos)]
+                    if int(neighbor_pos) not in window_set
+                ]
+                if not external_neighbors:
+                    continue
+
+                for item_row, item in enumerate(window_items):
+                    cost_matrix[item_row, target_col] = sum(
+                        weight * feature_distances[item, refined_perm[neighbor_pos]]
+                        for neighbor_pos, weight in external_neighbors
+                    )
+
+            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+            reassigned_items = window_items[row_ind[np.argsort(col_ind)]]
+            if np.array_equal(reassigned_items, window_items):
+                continue
+
+            old_energy = _compute_focus_edge_energy(
+                refined_perm,
+                window_positions,
+                feature_distances,
+                neighbors,
+            )
+            candidate_perm = refined_perm.copy()
+            candidate_perm[window_positions] = reassigned_items
+            new_energy = _compute_focus_edge_energy(
+                candidate_perm,
+                window_positions,
+                feature_distances,
+                neighbors,
+            )
+            if new_energy < old_energy - 1e-12:
+                refined_perm = candidate_perm
+                accepted += 1
+
+    return refined_perm, accepted
+
+
+def refine_permutation_with_neighbor_swaps(perm, data, grid_size, p_dist=2,
+                                           num_attempts=250_000,
+                                           candidate_pool=128,
+                                           exploration_rate=0.10,
+                                           early_stop_patience=50_000,
+                                           neighborhood_radius=3,
+                                           best_of_candidates=1,
+                                           proposal_strategy="baseline",
+                                           random_seed=0):
+    """
+    Greedy swap refinement using a local neighbour-similarity objective.
+
+    Starting from an existing permutation, repeatedly propose swaps and accept
+    them only when they reduce a weighted local feature-distance energy on the
+    grid. Most proposals come from nearest-neighbour items in feature space,
+    with a small amount of random exploration. The optional energy-mix proposal
+    biases the first swap position toward currently expensive cells, and the
+    best-of-k search can choose the strongest improvement among several sampled
+    swap candidates.
+    """
+    n_items = perm.shape[0]
+    data_norm = data.astype(np.float64)
+    if data_norm.max() > 1.0:
+        data_norm /= 255.0
+
+    feature_distances = cdist(data_norm, data_norm, metric='euclidean') ** p_dist
+    neighbors = build_grid_neighbor_lists(grid_size, radius=neighborhood_radius)
+
+    k = min(candidate_pool + 1, n_items)
+    nearest_items = np.argsort(feature_distances, axis=1)[:, :k]
+
+    refined_perm = perm.copy()
+    positions_of_items = np.empty(n_items, dtype=np.int32)
+    positions_of_items[refined_perm] = np.arange(n_items, dtype=np.int32)
+
+    rng = np.random.default_rng(random_seed)
+    accepted = 0
+    stale_steps = 0
+    energy_probs = None
+
+    for step in range(num_attempts):
+        if proposal_strategy == "energy_mix":
+            if step % 512 == 0 or energy_probs is None:
+                energies = _compute_cell_neighbor_energies(
+                    refined_perm,
+                    feature_distances,
+                    neighbors,
+                )
+                energy_probs = energies + 1e-9
+                energy_probs /= energy_probs.sum()
+            if rng.random() < 0.75:
+                pos_a = int(rng.choice(n_items, p=energy_probs))
+            else:
+                pos_a = int(rng.integers(n_items))
+        else:
+            pos_a = int(rng.integers(n_items))
+        item_a = refined_perm[pos_a]
+
+        best_delta = 0.0
+        best_pos_b = pos_a
+        for _ in range(best_of_candidates):
+            if rng.random() < exploration_rate:
+                pos_b = int(rng.integers(n_items))
+            else:
+                candidate_idx = int(rng.integers(1, k))
+                item_b = int(nearest_items[item_a, candidate_idx])
+                pos_b = int(positions_of_items[item_b])
+
+            delta = _swap_delta_neighbor_energy(
+                refined_perm,
+                pos_a,
+                pos_b,
+                feature_distances,
+                neighbors,
+            )
+            if delta < best_delta:
+                best_delta = delta
+                best_pos_b = pos_b
+
+        if best_delta < -1e-12:
+            pos_b = best_pos_b
+            item_b = refined_perm[pos_b]
+            refined_perm[pos_a], refined_perm[pos_b] = item_b, item_a
+            positions_of_items[item_a], positions_of_items[item_b] = pos_b, pos_a
+            accepted += 1
+            stale_steps = 0
+        else:
+            stale_steps += 1
+            if stale_steps >= early_stop_patience:
+                break
+
+    return refined_perm, accepted
+
+
+def build_size_aware_swap_schedule(grid_size):
+    """
+    Scale the swap-refinement schedule with the grid dimensions.
+
+    Radii are chosen as fractions of the grid width, while the search budget is
+    scaled roughly linearly with the number of cells. This preserves the tuned
+    32x32 behaviour but adapts naturally to smaller or larger square grids.
+    """
+    n_items = grid_size * grid_size
+
+    raw_radii = [
+        max(1.0, grid_size / 6.0),
+        max(1.0, grid_size / 10.0),
+        max(1.0, grid_size / 20.0),
+        1.0,
+    ]
+    radii = []
+    for radius in raw_radii:
+        if not radii or abs(radius - radii[-1]) > 0.25:
+            radii.append(radius)
+
+    attempt_coeffs = [98.0, 147.0, 98.0, 59.0]
+    exploration_rates = [0.10, 0.10, 0.08, 0.05]
+    best_of_values = [4, 4, 4, 8]
+    pool_multipliers = [5, 4, 3, 3]
+    patience_ratios = [0.25, 0.233, 0.25, 0.25]
+
+    schedule = []
+    for idx, radius in enumerate(radii):
+        attempts = int(max(8_000, round(attempt_coeffs[idx] * n_items)))
+        candidate_pool = min(n_items - 1, max(16, pool_multipliers[idx] * grid_size))
+        patience = int(max(2_000, round(patience_ratios[idx] * attempts)))
+        schedule.append(
+            {
+                "radius": radius,
+                "attempts": attempts,
+                "pool": candidate_pool,
+                "exploration": exploration_rates[idx],
+                "patience": patience,
+                "best_of": best_of_values[idx],
+            }
+        )
+    return schedule
+
+
+def refine_permutation_with_multistage_swaps(perm, data, grid_size, p_dist=2):
+    """
+    Apply coarse-to-fine local swap refinement.
+
+    Larger-radius stages first fix broader layout defects, then narrower stages
+    clean up local inconsistencies.
+    """
+    stages = build_size_aware_swap_schedule(grid_size)
+    refined_perm = perm.copy()
+    total_accepted = 0
+    for stage_idx, stage in enumerate(stages):
+        refined_perm, accepted = refine_permutation_with_neighbor_swaps(
+            refined_perm,
+            data,
+            grid_size,
+            p_dist=p_dist,
+            num_attempts=stage["attempts"],
+            candidate_pool=stage["pool"],
+            exploration_rate=stage["exploration"],
+            early_stop_patience=stage["patience"],
+            neighborhood_radius=stage["radius"],
+            best_of_candidates=stage["best_of"],
+            proposal_strategy="energy_mix",
+            random_seed=stage_idx,
+        )
+        total_accepted += accepted
+    return refined_perm, total_accepted
+
+
+def solve_tsne_hungarian_permutation(data, grid_size, perplexity=None,
+                                     tsne_iter=2000,
+                                     use_window_refinement=True):
+    """
+    Build a grid permutation from a t-SNE embedding plus Hungarian assignment.
+
+    The t-SNE embedding supplies a 2D geometry for the items, Hungarian maps
+    those embedded points to discrete grid cells, and the result is then passed
+    through the repo's non-cheating local swap refinement plus an optional
+    windowed reassignment pass for stronger local repairs.
+    """
+    assignment_cost = build_tsne_assignment_cost(
+        data,
+        grid_size,
+        perplexity=perplexity,
+        tsne_iter=tsne_iter,
+    )
+    row_ind, col_ind = linear_sum_assignment(assignment_cost)
+    permutation = row_ind[np.argsort(col_ind)]
+    permutation, _ = refine_permutation_with_multistage_swaps(
+        permutation,
+        data,
+        grid_size,
+        p_dist=2,
+    )
+    if use_window_refinement:
+        permutation, _ = refine_permutation_with_window_reassignments(
+            permutation,
+            data,
+            grid_size,
+            p_dist=2,
+        )
+    return permutation
 
 
 # ── main algorithm functions ───────────────────────────────────────────────────
@@ -505,6 +964,27 @@ def isomatch_rgb():
     dpq = distance_preservation_quality(x_reordered, p=16)
     print(f"Distance Preservation Quality: {dpq}")
 
+
+def tsne_hungarian_rgb():
+    """
+    Sort a random 32×32 RGB grid using t-SNE + Hungarian assignment.
+
+    The RGB vectors are embedded into 2D with t-SNE, assigned to grid cells via
+    the Hungarian algorithm, and then refined with the repo's weighted local
+    swap search. Result saved as 'tsneh_rgb.png'.
+    """
+    grid_size = 32
+    x_orig = generate_random_colors_numpy(grid_size, grid_size)
+    data = x_orig.reshape(-1, 3)
+
+    permutation_indices = solve_tsne_hungarian_permutation(data, grid_size, tsne_iter=2000)
+
+    x_reordered = data[permutation_indices].reshape(grid_size, grid_size, -1)
+    Image.fromarray(x_reordered.astype(np.uint8)).save('tsneh_rgb.png')
+
+    dpq = distance_preservation_quality(x_reordered, p=16)
+    print(f"Distance Preservation Quality: {dpq}")
+
 # ── entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
@@ -514,7 +994,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "--method",
         default="LAS",
-        choices=["LAS", "Gradsort", "RF", "SOM", "Random", "KS", "IsoMatch"],
+        choices=["LAS", "Gradsort", "RF", "SOM", "Random", "KS", "IsoMatch", "TSNEH"],
         help="Algorithm to run."
     )
     args = parser.parse_args()
@@ -527,5 +1007,6 @@ if __name__ == '__main__':
         "Random":   random_rgb,
         "KS":       KS_rgb,
         "IsoMatch": isomatch_rgb,
+        "TSNEH":    tsne_hungarian_rgb,
     }
     dispatch[args.method]()

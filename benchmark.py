@@ -39,6 +39,7 @@ from gridsort import (
     dist_matrix_loss_func,
     constraint_loss,
     device,
+    solve_tsne_hungarian_permutation,
 )
 
 from isomatch import isomatch_algorithm
@@ -198,6 +199,13 @@ def run_isomatch(data, grid_size):
     return result, dpq
 
 
+def run_tsneh(data, grid_size):
+    perm = solve_tsne_hungarian_permutation(data, grid_size, tsne_iter=2000)
+    result = data[perm].reshape(grid_size, grid_size, -1)
+    dpq = distance_preservation_quality(result, p=16)
+    return result, dpq
+
+
 
 ALGORITHMS = [
     ("Random",     run_random),
@@ -207,6 +215,7 @@ ALGORITHMS = [
     ("SOM",        run_som),
     ("KS",         run_ks),
     ("IsoMatch",   run_isomatch),
+    ("TSNEH",      run_tsneh),
 ]
 
 def main():
@@ -234,7 +243,7 @@ def main():
     print(f"\nSorted grids saved to ./{RESULTS_DIR}/")
 
     # ── Build composite image ─────────────────────────────────────────────────
-    # Layout: Random centred on top, then 2 rows × 3 cols for the 6 algos
+    # Layout: Random centred on top, then the remaining algorithms in rows of 3
     grids = {}
     for name, fn in ALGORITHMS:
         fname = os.path.join(RESULTS_DIR, f"{name.lower().replace(' ', '_')}.png")
@@ -246,8 +255,9 @@ def main():
     cell_w     = cell_px + pad
     cell_h     = cell_px + label_h + pad
 
-    cols, rows = 3, 2
-    algo_names = ["LAS", "GradSort", "RasterFairy", "SOM", "KS", "IsoMatch"]
+    cols = 3
+    algo_names = ["LAS", "GradSort", "RasterFairy", "SOM", "KS", "IsoMatch", "TSNEH"]
+    rows = int(np.ceil(len(algo_names) / cols))
 
     total_w = cols * cell_w + pad
     total_h = (cell_h + pad) + rows * cell_h + pad

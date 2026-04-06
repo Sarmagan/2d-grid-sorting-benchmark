@@ -1,7 +1,7 @@
 [project]
 name = "grid-sort-benchmark"
 version = "0.1.0"
-description = "2D grid-sorting algorithm benchmark (LAS, GradSort, RasterFairy, SOM, KS)"
+description = "2D grid-sorting algorithm benchmark (LAS, GradSort, RasterFairy, SOM, KS, IsoMatch, TSNEH)"
 requires-python = ">=3.10"
 
 dependencies = [

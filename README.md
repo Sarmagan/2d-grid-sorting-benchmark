@@ -1,24 +1,27 @@
 # 2D Grid-Sorting Benchmark
 
-This project benchmarks several algorithms that arrange a set of high-dimensional elements onto a 2-D grid such that similar elements end up near each other. The canonical demo uses a **32 × 32 random RGB image** where every pixel is a separate element (1 024 elements in total).
+This project benchmarks several algorithms that arrange a set of high-dimensional elements onto a 2-D grid such that similar elements end up near each other. The canonical demo uses a **32 × 32 random RGB image** where every pixel is a separate element (1 024 elements in total). The current suite includes LAS, GradSort, RasterFairy, SOM, KS, IsoMatch, a random baseline, and a `t-SNE + Hungarian + swap refinement` solver.
 
 ## Results
 
 ### Visual Comparison
 
-![Comparison](arranged.png)
+Comparison
 
 ### Benchmark Table (32 × 32 RGB, 1024 elements)
 
+
 | Algorithm   | Time (s) | DPQ (p=16) |
-|-------------|:--------:|:----------:|
-| LAS         |     6.04 |     0.9555 |
-| GradSort    |   465.91 |     0.9436 |
-| RasterFairy |    64.73 |     0.9086 |
-| KS          |    17.25 |     0.8978 |
-| SOM         |     4.48 |     0.8906 |
-| IsoMatch    |  1025.75 |     0.7684 |
-| Random      |     0.08 |     0.3294 |
+| ----------- | -------- | ---------- |
+| LAS         | 6.04     | 0.9555     |
+| GradSort    | 465.91   | 0.9436     |
+| TSNEH       | 103.07   | 0.9429     |
+| RasterFairy | 64.73    | 0.9086     |
+| KS          | 17.25    | 0.8978     |
+| SOM         | 4.48     | 0.8906     |
+| IsoMatch    | 1025.75  | 0.7684     |
+| Random      | 0.08     | 0.3294     |
+
 
 Run the benchmark yourself with:
 
@@ -31,7 +34,7 @@ python benchmark.py
 ## Usage
 
 ```bash
-python gridsort.py --method [LAS|Gradsort|RF|SOM|Random|KS]
+python gridsort.py --method [LAS|Gradsort|RF|SOM|Random|KS|IsoMatch|TSNEH]
 ```
 
 Each run saves a sorted PNG and prints the **Distance Preservation Quality (DPQ)**.
@@ -41,6 +44,7 @@ Each run saves a sorted PNG and prints the **Distance Preservation Quality (DPQ)
 ## Algorithms
 
 ### LAS — Locally-Adaptive Sorting
+
 **Implementation:** `rgb_las.py` → `sort_with_las()`
 
 LAS iteratively refines a 2-D arrangement using progressively finer local structure:
@@ -54,11 +58,12 @@ LAS iteratively refines a 2-D arrangement using progressively finer local struct
 FLAS (Fast LAS) extends this by only solving approximate local assignment problems instead of the global one, giving a significant speed-up for large grids.
 
 **Reference:** Visual Computing Group, HPI  
-https://github.com/Visual-Computing/LAS_FLAS
+[https://github.com/Visual-Computing/LAS_FLAS](https://github.com/Visual-Computing/LAS_FLAS)
 
 ---
 
 ### GradSort
+
 **Implementation:** `gridsort.py` → `gradsort_rgb()`
 
 GradSort formulates grid sorting as a **differentiable optimisation problem**. A transformer network predicts an N × N assignment matrix which is relaxed to a doubly-stochastic matrix via the **Gumbel-Sinkhorn** operator. The network is trained end-to-end by minimising two complementary losses:
@@ -70,11 +75,12 @@ GradSort formulates grid sorting as a **differentiable optimisation problem**. A
 At inference the hard permutation is extracted from the trained network, then refined by a final linear sum assignment step.
 
 **Reference:** Visual Computing Group, HPI  
-https://github.com/Visual-Computing/GradSort
+[https://github.com/Visual-Computing/GradSort](https://github.com/Visual-Computing/GradSort)
 
 ---
 
 ### RasterFairy
+
 **Implementation:** `gridsort.py` → `raster_fairy_rgb()`
 
 RasterFairy is a two-stage method:
@@ -84,11 +90,12 @@ RasterFairy is a two-stage method:
 3. **Swap optimisation** — refine the assignment with a stochastic swap optimiser that minimises total displacement in the 2-D embedding.
 
 **Reference:** Mario Klingemann (Quasimondo)  
-https://github.com/Quasimondo/RasterFairy
+[https://github.com/Quasimondo/RasterFairy](https://github.com/Quasimondo/RasterFairy)
 
 ---
 
 ### SOM — Self-Organising Maps
+
 **Implementation:** `gridsort.py` → `self_organizing_maps_rgb()`
 
 A **MiniSom** network is trained on the raw RGB feature vectors. After training:
@@ -99,11 +106,12 @@ A **MiniSom** network is trained on the raw RGB feature vectors. After training:
 The competitive learning dynamics of the SOM ensure that topologically close neurons respond to similar inputs, producing a smooth arrangement.
 
 **Reference:** Justin Gloudemans — MiniSom  
-https://github.com/JustGlowing/minisom
+[https://github.com/JustGlowing/minisom](https://github.com/JustGlowing/minisom)
 
 ---
 
 ### KS — Kernelized Sorting
+
 **Implementation:** `gridsort.py` → `KS_rgb()`
 
 Kernelized Sorting finds the permutation matrix **Π** that maximises the alignment between a **kernel on the feature space** and a **kernel on the target grid**. The objective is:
@@ -116,22 +124,40 @@ where K_X is the feature kernel, K_G is the grid kernel, and the maximisation is
 
 **Reference:** Novi Quadrianto, Le Song, Alex Smola (2009)  
 *Kernelized Sorting* — NeurIPS 2009  
-https://users.sussex.ac.uk/~nq28/pubs/QuaSonSmo09.pdf
+[https://users.sussex.ac.uk/~nq28/pubs/QuaSonSmo09.pdf](https://users.sussex.ac.uk/~nq28/pubs/QuaSonSmo09.pdf)
+
+---
+
+### TSNEH — t-SNE + Hungarian + Local Refinement
+
+**Implementation:** `gridsort.py` → `tsne_hungarian_rgb()`
+
+This method uses a direct embedding-plus-assignment pipeline:
+
+1. Build a pairwise RGB distance matrix.
+2. Embed the items into 2D with **t-SNE**.
+3. Assign embedded points to discrete grid cells with the **Hungarian algorithm**.
+4. Run a greedy weighted **swap refinement** stage that only accepts swaps improving the method's local neighbour-similarity objective.
+5. Apply a small-window **Hungarian reassignment** pass that can repair local regions with multi-item moves.
+
+In this repo the tuned defaults choose a size-aware `t-SNE` perplexity automatically, use a coarse-to-fine weighted swap schedule whose radii and search budget scale with the grid dimensions, and finish with a windowed local reassignment pass. The swap stage handles cheap pairwise cleanup, while the final window pass can improve stubborn local patches by reassigning several nearby items at once under the same neighbour-similarity objective.
 
 ---
 
 ### IsoMatch
+
 **Implementation:** `gradsort.py` → `isomatch_rgb()`
 
 IsoMatch uses **Isomap** (a manifold learning technique) to embed the high-dimensional elements into a low-dimensional space that respects geodesic distances, then solves a **bipartite matching** problem to assign elements to grid positions. An optional random-swap refinement phase further improves the result.
 
 **Reference:** Fried, Shechtman, Goldman, Finkelstein (2015)  
 *IsoMatch: Creating Informative Grid Layouts*  
-https://github.com/ohadf/isomatch
+[https://github.com/ohadf/isomatch](https://github.com/ohadf/isomatch)
 
 ---
 
 ### Random (baseline)
+
 **Implementation:** `gridsort.py` → `random_rgb()`
 
 Elements are placed on the grid in a random order. This baseline provides a lower bound for grid quality scores and DPQ values.
@@ -144,7 +170,7 @@ DPQ measures how well the 2-D spatial neighbourhood structure reflects the high-
 
 For each element, the function computes the average high-dimensional distance to its *k* nearest grid neighbours for every k from 1 to N-1, then compares this curve to the ideal curve obtained by sorting by HD distance directly. The final score is the ratio of the ℓ_p norms of these two curves.
 
-- **DPQ = 1.0** — perfect preservation of high-dimensional distances.  
+- **DPQ = 1.0** — perfect preservation of high-dimensional distances.
 
 Implemented in `rgb_las.py` → `distance_preservation_quality()`.
 
@@ -192,3 +218,4 @@ uv sync
 ├── results/                             # Output PNGs from benchmark.py
 └── README.md
 ```
+
